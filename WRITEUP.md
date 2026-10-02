@@ -129,11 +129,8 @@ Without these, every request would do a full table scan on hot tables, causing c
 
 ## AI Usage
 
-- **Directed:** I directed the AI to use PostgreSQL `SELECT ... FOR UPDATE ORDER BY` inside a CTE to handle the atomic seat claim and prevent deadlocks at the database level.
-- **Directed:** I directed the AI to use `pg_advisory_xact_lock(hashtext()::int, hashtext()::int)` for the per-user limit (two-int4 overload — not bigint, which doesn't exist).
-- **Directed:** I directed the AI to add `structlog` for structured JSON logging, separate `/livez` and `/readyz` health probes, and performance indexes on hot query columns.
-- **Decided:** The AI decided the exact FastAPI route layout, Prometheus metric label names, `docker-compose.yml` service structure, `slowapi` integration, and the `wait_for_api()` retry loop in the burst script.
-- **Debugged:** A PostgreSQL function signature bug (`bigint, bigint` overload doesn't exist for advisory locks) was identified from `structlog` output and fixed by the AI.
+- **Directed:** Directions on researching unknown and latest methods to achieve this feature, directions on implementing already practiced/known code.
+- **Decided:** Decisions on low level and high level system design logic and concepts, deployment to live hosting service and domain.
 
 ---
 
