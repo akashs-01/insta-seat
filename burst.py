@@ -65,17 +65,26 @@ async def main():
         sem = asyncio.Semaphore(500) 
         
         # 20,000 different users trying to book 75 seats at the same time
+        hot_requests = 0
+        normal_requests = 0
         for i in range(20000):
             user_id = f"user_{i}"
             idem_key = str(uuid.uuid4())
             # 50% chance to hit a hot seat, 50% chance to hit a normal seat
             if random.random() < 0.5:
                 seat = random.choice(hot_seats)
+                hot_requests += 1
             else:
                 seat = random.choice(normal_seats)
+                normal_requests += 1
 
             tasks.append(reserve_seat_with_sem(sem, session, show_id, user_id, seat, idem_key))
-            
+
+        print(f"Traffic plan:")
+        print(f"  🔥 Hot seats    {hot_seats} → ~{hot_requests} requests ({hot_requests*100//20000}% of traffic) — 3 seats available")
+        print(f"  🪑 Normal seats A29–A100 → ~{normal_requests} requests ({normal_requests*100//20000}% of traffic) — 72 seats available")
+        print(f"  Expected winners: 3 (hot) + 72 (normal) = 75 confirmed bookings\n")
+
         start = time.time()
         results = await asyncio.gather(*tasks)
         print(f"Time taken: {time.time() - start:.2f}s")
@@ -86,6 +95,14 @@ async def main():
 
         print(f"Full distribution: { {k: v for k, v in sorted(counts.items())} }")
         print(f"Results for stampede: 201: {counts.get(201,0)}, 409: {counts.get(409,0)}, 429: {counts.get(429,0)}, 500: {counts.get(500,0)}, conn-errors(-1): {counts.get(-1,0)}")
+        winners = counts.get(201, 0)
+        declines = counts.get(409, 0)
+        overloaded = counts.get(429, 0)
+        print(f"\n  ✅ {winners}/75 seats successfully booked ({winners*100//75}% of target capacity filled)")
+        print(f"  🚫 {declines} clean conflict declines (409 — seat already taken)")
+        if overloaded:
+            print(f"  ⏳ {overloaded} load-shed declines (429 — pool pressure, safe to retry)")
+
         assert counts.get(201, 0) == 75, f"Expected exactly 75 201 winners, got: {counts}"
         assert counts.get(500, 0) == 0, f"Expected zero server 500 errors, got: {counts}"
         if counts.get(-1, 0) > 0:
