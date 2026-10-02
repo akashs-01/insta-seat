@@ -3,10 +3,11 @@ import time
 import asyncio
 import json
 import logging
+import os
 
 import structlog
 from fastapi import FastAPI, HTTPException, Header, Depends, status, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List
 from contextlib import asynccontextmanager
@@ -18,6 +19,39 @@ from slowapi.errors import RateLimitExceeded
 import database
 
 # ---------------------------------------------------------------------------
+# Live Log Broadcaster — fans out every log line to all SSE clients
+# (must be defined BEFORE structlog.configure so broadcast_and_render is in scope)
+# ---------------------------------------------------------------------------
+class LogBroadcaster:
+    """Thread-safe broadcast queue: one asyncio.Queue per connected SSE client."""
+    def __init__(self):
+        self._clients: set[asyncio.Queue] = set()
+
+    def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue(maxsize=200)
+        self._clients.add(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue):
+        self._clients.discard(q)
+
+    def publish(self, line: str):
+        for q in list(self._clients):
+            try:
+                q.put_nowait(line)
+            except asyncio.QueueFull:
+                pass  # slow client — drop the line rather than block
+
+broadcaster = LogBroadcaster()
+
+def broadcast_and_render(logger, method, event_dict):
+    """Final structlog processor: renders JSON, prints to stdout, AND pushes to SSE clients."""
+    rendered = json.dumps(event_dict, default=str)
+    print(rendered, flush=True)
+    broadcaster.publish(rendered)
+    raise structlog.DropEvent()  # prevent double-printing by PrintLoggerFactory
+
+# ---------------------------------------------------------------------------
 # Structlog setup — structured JSON logs with correlation IDs
 # ---------------------------------------------------------------------------
 structlog.configure(
@@ -25,7 +59,7 @@ structlog.configure(
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer(),
+        broadcast_and_render,  # renders JSON, prints to stdout, AND pushes to SSE clients
     ],
     wrapper_class=structlog.make_filtering_bound_logger(logging.INFO),
     context_class=dict,
@@ -155,6 +189,43 @@ async def health():
 @app.get("/metrics", tags=["Observability"])
 async def metrics():
     return PlainTextResponse(generate_latest())
+
+# ---------------------------------------------------------------------------
+# LIVE LOG STREAM — Server-Sent Events endpoint
+# ---------------------------------------------------------------------------
+_LOGS_TOKEN = os.environ.get("LOGS_TOKEN", "")  # set in .env to protect this endpoint
+
+@app.get("/logs/stream", tags=["Observability"])
+async def stream_logs(token: str = ""):
+    """
+    Live structured JSON log stream via Server-Sent Events.
+    Connect with:  curl -N http://localhost:8000/logs/stream
+    Or in browser: EventSource('/logs/stream')
+    Protect with LOGS_TOKEN env var (optional but recommended in production).
+    """
+    if _LOGS_TOKEN and token != _LOGS_TOKEN:
+        return JSONResponse(status_code=401, content={"detail": "Invalid or missing token. Use ?token=YOUR_TOKEN"})
+
+    async def event_generator():
+        q = broadcaster.subscribe()
+        try:
+            yield "data: {\"event\": \"connected\", \"message\": \"Live log stream started\"}\n\n"
+            while True:
+                line = await q.get()
+                yield f"data: {line}\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            broadcaster.unsubscribe(q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disables Nginx buffering for live streaming
+        }
+    )
 
 # ---------------------------------------------------------------------------
 # SHOWS
