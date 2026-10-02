@@ -89,8 +89,17 @@ The script automatically waits for the API to be fully ready (polls `/readyz`) b
 
 ### Proven results (local Docker run):
 ```text
+Traffic plan:
+  🔥 Hot seats    ['A26', 'A27', 'A28'] → ~10012 requests (50% of traffic) — 3 seats available
+  🪑 Normal seats A29–A100 → ~9988 requests (49% of traffic) — 72 seats available
+  Expected winners: 3 (hot) + 72 (normal) = 75 confirmed bookings
+
 Full distribution: {201: 75, 409: 19925}
-Results for stampede: 201: 75, 409: 19925, 429: 0, 500: 0
+Results for stampede: 201: 75, 409: 19925, 429: 0, 500: 0, conn-errors(-1): 0
+
+  ✅ 75/75 seats successfully booked (100% of target capacity filled)
+  🚫 19925 clean conflict declines (409 — seat already taken)
+
 Per-user limit: 201: 4, 409: 6, 500: 0
 Reconciliation: {'available': 21, 'held': 0, 'confirmed': 79} — Total: 100 ✅
 ```
